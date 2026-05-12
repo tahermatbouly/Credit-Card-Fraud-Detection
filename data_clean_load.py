@@ -1,6 +1,6 @@
 import pandas as pd
 
-def load_data(path="/content/paysim.csv"):
+def load_data(path="paysim.csv"):
     """Load transaction data"""
     data = pd.read_csv(path)
     return data

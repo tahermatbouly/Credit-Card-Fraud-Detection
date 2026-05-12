@@ -1,8 +1,8 @@
 # main.py
-from data_cleaning import load_data, inspect_data, clean_data
-from feature_engineering import engineer_features
+from data_clean_load import load_data, inspect_data, clean_data
+from feature_Eng import engineer_features
 from preprocessing import preprocess_pipeline
-from model_training import run_training_pipeline
+from models_train import run_training_pipeline
 
 def main():
     print("Starting Credit Card Fraud Detection Pipeline...")
