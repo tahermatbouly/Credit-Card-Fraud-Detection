@@ -1,3 +1,5 @@
+import os
+import joblib
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from imblearn.over_sampling import SMOTE
@@ -13,6 +15,9 @@ def run_model(X_train, X_test, y_train, y_test):
 
     y_pred = model.predict(X_test)
     y_prob = model.predict_proba(X_test)[:, 1]
+
+    os.makedirs("output/models", exist_ok=True)
+    joblib.dump(model, "output/models/random_forest.pkl")
 
     return {
         "model_name": "Random Forest",

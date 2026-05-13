@@ -1,21 +1,83 @@
-from __future__ import annotations
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import (
+    confusion_matrix,
+    roc_auc_score,
+    roc_curve,
+    precision_recall_curve,
+    accuracy_score,
+    f1_score,
+    precision_score,
+    recall_score
+)
 
-from typing import Any
 
-from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
+# =========================
+# Store results globally for comparison
+# =========================
+all_models_results = []
 
 
-def evaluate_model(name: str, model: Any, X_test: Any, y_test: Any) -> dict[str, Any]:
+def evaluate_model(name, model, X_test, y_test):
+
     y_pred = model.predict(X_test)
-    y_prob = model.predict_proba(X_test)[:, 1]
-    roc = float(roc_auc_score(y_test, y_prob))
 
-    print(f"\n===== {name} =====\n")
-    print("Confusion Matrix:")
-    print(confusion_matrix(y_test, y_pred))
-    print("\nClassification Report:")
-    print(classification_report(y_test, y_pred))
-    print("\nROC-AUC Score:")
-    print(roc)
+    # some models support predict_proba
+    y_prob = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else None
 
-    return {"name": name, "roc_auc": roc}
+    # =========================
+    # Metrics
+    # =========================
+    metrics = {
+        "model_name": name,
+        "accuracy": accuracy_score(y_test, y_pred),
+        "precision": precision_score(y_test, y_pred),
+        "recall": recall_score(y_test, y_pred),
+        "f1": f1_score(y_test, y_pred),
+        "roc_auc": roc_auc_score(y_test, y_prob) if y_prob is not None else None
+    }
+
+    all_models_results.append(metrics)
+
+    # =========================
+    # Confusion Matrix Plot
+    # =========================
+    cm = confusion_matrix(y_test, y_pred)
+    plt.figure(figsize=(4, 3))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
+    plt.title(f"{name} - Confusion Matrix")
+    plt.xlabel("Predicted")
+    plt.ylabel("Actual")
+    plt.show()
+
+    # =========================
+    # ROC Curve
+    # =========================
+    if y_prob is not None:
+        fpr, tpr, _ = roc_curve(y_test, y_prob)
+        plt.plot(fpr, tpr, label=f"{name} (AUC={metrics['roc_auc']:.2f})")
+
+    return metrics
+
+
+def plot_model_comparison():
+
+    if not all_models_results:
+        return
+
+    names = [m["model_name"] for m in all_models_results]
+    roc = [m["roc_auc"] for m in all_models_results]
+    f1 = [m["f1"] for m in all_models_results]
+    recall = [m["recall"] for m in all_models_results]
+
+    x = range(len(names))
+
+    plt.figure(figsize=(10, 5))
+    plt.bar(x, roc, label="ROC-AUC")
+    plt.bar(x, f1, label="F1")
+    plt.bar(x, recall, label="Recall")
+
+    plt.xticks(x, names)
+    plt.title("Model Comparison")
+    plt.legend()
+    plt.show()
