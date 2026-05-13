@@ -1,0 +1,6 @@
+{
+  "model_name": "Random Forest",
+  "model_name_slug": "random_forest",
+  "roc_auc": 0.9998749100916284,
+  "has_scaler": false
+}

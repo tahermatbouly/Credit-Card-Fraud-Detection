@@ -26,6 +26,7 @@ def run_model(X_train, X_test, y_train, y_test):
     return {
         "model_name": "XGBoost",
         "model": model,
+        "scaler": None,
         "accuracy": accuracy_score(y_test, y_pred),
         "f1": f1_score(y_test, y_pred),
         "roc_auc": auc,

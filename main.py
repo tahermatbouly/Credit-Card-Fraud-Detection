@@ -1,13 +1,32 @@
+import joblib
+
 from src.training.train import train_pipeline
 
 
 def main():
+
     print("\n===================================")
-    print("🚀 CREDIT CARD FRAUD ML PIPELINE")
+    print("🚀 CREDIT CARD FRAUD ML SYSTEM")
     print("===================================\n")
 
+    # =========================
+    # TRAIN ALL MODELS
+    # =========================
     best_model, results = train_pipeline()
 
+    # =========================
+    # SAVE BEST MODEL
+    # =========================
+    model_name = best_model[0]
+    model_obj = best_model[1]
+
+    joblib.dump(model_obj, "models/best_model.pkl")
+
+    print("\n💾 Best model saved as: models/best_model.pkl")
+
+    # =========================
+    # FINAL REPORT
+    # =========================
     print("\n===================================")
     print("📊 FINAL MODEL COMPARISON")
     print("===================================\n")
@@ -21,10 +40,10 @@ def main():
         print("-----------------------------------")
 
     print("\n🏆 BEST MODEL SELECTED:")
-    print(f"Model Name: {best_model[0]}")
-    print(best_model[1])
+    print(f"Model Name: {model_name}")
+    print(f"ROC-AUC: {max([r['roc_auc'] for r in results]):.4f}")
 
-    print("\n✅ Pipeline execution completed successfully!")
+    print("\n✅ Training pipeline completed successfully!")
 
 
 if __name__ == "__main__":
