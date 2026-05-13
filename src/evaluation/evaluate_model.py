@@ -1,83 +1,101 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
+
 from sklearn.metrics import (
     confusion_matrix,
-    roc_auc_score,
     roc_curve,
-    precision_recall_curve,
+    roc_auc_score,
     accuracy_score,
-    f1_score,
     precision_score,
-    recall_score
+    recall_score,
+    f1_score
 )
 
 
-# =========================
-# Store results globally for comparison
-# =========================
-all_models_results = []
-
-
-def evaluate_model(name, model, X_test, y_test):
+def evaluate_model(model_name, model, X_test, y_test):
 
     y_pred = model.predict(X_test)
+    y_prob = model.predict_proba(X_test)[:, 1]
 
-    # some models support predict_proba
-    y_prob = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else None
-
-    # =========================
-    # Metrics
-    # =========================
     metrics = {
-        "model_name": name,
+        "model_name": model_name,
         "accuracy": accuracy_score(y_test, y_pred),
         "precision": precision_score(y_test, y_pred),
         "recall": recall_score(y_test, y_pred),
         "f1": f1_score(y_test, y_pred),
-        "roc_auc": roc_auc_score(y_test, y_prob) if y_prob is not None else None
+        "roc_auc": roc_auc_score(y_test, y_prob)
     }
 
-    all_models_results.append(metrics)
-
-    # =========================
-    # Confusion Matrix Plot
-    # =========================
     cm = confusion_matrix(y_test, y_pred)
-    plt.figure(figsize=(4, 3))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
-    plt.title(f"{name} - Confusion Matrix")
-    plt.xlabel("Predicted")
-    plt.ylabel("Actual")
+    fpr, tpr, _ = roc_curve(y_test, y_prob)
+
+    return {
+        "metrics": metrics,
+        "confusion_matrix": cm,
+        "roc": (fpr, tpr, metrics["roc_auc"])
+    }
+    
+def show_final_visualization(results, cms, roc_data):
+
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    # ================= BEST MODEL =================
+    best = max(results, key=lambda x: x["roc_auc"])
+
+    print("\nBEST MODEL:", best["model_name"])
+    print("ROC-AUC:", best["roc_auc"])
+
+    # ================= CONFUSION MATRICES =================
+    n = len(cms)
+    
+    cols = min(n, 3)
+    rows = (n + cols - 1) // cols
+    
+    plt.figure(figsize=(5 * cols, 4 * rows))
+    
+    for i, (name, cm) in enumerate(cms):
+    
+        plt.subplot(rows, cols, i + 1)
+    
+        sns.heatmap(
+            cm,
+            annot=True,
+            fmt="d",
+            cmap="Blues",
+            cbar=False
+        )
+    
+        plt.title(name)
+        plt.xlabel("Predicted")
+        plt.ylabel("Actual")
+    
+    plt.tight_layout()
+    plt.show()
+    # ================= ROC CURVES =================
+    plt.figure(figsize=(8, 6))
+
+    for name, (fpr, tpr, auc) in roc_data:
+        plt.plot(
+            fpr,
+            tpr,
+              label=f"{name} (AUC={auc:.2f})"
+    )
+
+        # baseline (IMPORTANT: also label it)
+    plt.plot([0, 1], [0, 1], "--", color="gray", label="Random Classifier")
+
+    plt.title("ROC Curve Comparison")
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+
+    plt.legend()
     plt.show()
 
-    # =========================
-    # ROC Curve
-    # =========================
-    if y_prob is not None:
-        fpr, tpr, _ = roc_curve(y_test, y_prob)
-        plt.plot(fpr, tpr, label=f"{name} (AUC={metrics['roc_auc']:.2f})")
+    # ================= METRICS BAR =================
+    names = [r["model_name"] for r in results]
+    roc = [r["roc_auc"] for r in results]
 
-    return metrics
-
-
-def plot_model_comparison():
-
-    if not all_models_results:
-        return
-
-    names = [m["model_name"] for m in all_models_results]
-    roc = [m["roc_auc"] for m in all_models_results]
-    f1 = [m["f1"] for m in all_models_results]
-    recall = [m["recall"] for m in all_models_results]
-
-    x = range(len(names))
-
-    plt.figure(figsize=(10, 5))
-    plt.bar(x, roc, label="ROC-AUC")
-    plt.bar(x, f1, label="F1")
-    plt.bar(x, recall, label="Recall")
-
-    plt.xticks(x, names)
-    plt.title("Model Comparison")
-    plt.legend()
+    plt.bar(names, roc)
+    plt.title("ROC-AUC Comparison")
     plt.show()

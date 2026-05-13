@@ -7,8 +7,12 @@ from src.models.logistic_regression import run_model as lr_model
 from src.models.random_forest import run_model as rf_model
 from src.models.xg_boost import run_model as xgb_model
 
-from src.evaluation.evaluate_model import plot_model_comparison
+# from src.evaluation.evaluate_model import plot_model_comparison
+from src.evaluation.evaluate_model import evaluate_model, show_final_visualization
 
+results = []
+cms = []
+roc_data = []
 
 def main():
 
@@ -29,12 +33,30 @@ def main():
     # =========================
     # Run models
     # =========================
-    results = [
+    model_outputs = [
         lr_model(X_train, X_test, y_train, y_test),
         rf_model(X_train, X_test, y_train, y_test),
         xgb_model(X_train, X_test, y_train, y_test)
     ]
 
+    results = []
+    cms = []
+    roc_data = []
+
+    for output in model_outputs:
+
+        results.append({
+        "model_name": output["model_name"],
+        "accuracy": output["accuracy"],
+        "f1": output["f1"],
+        "roc_auc": output["roc_auc"]
+    })
+
+
+        cms.append((output["model_name"], output["confusion_matrix"]))
+
+        fpr, tpr, auc = output["roc"]
+        roc_data.append((output["model_name"], (fpr, tpr, auc)))
     # =========================
     # Print results
     # =========================
@@ -59,7 +81,8 @@ def main():
     # =========================
     # Visualization
     # =========================
-    plot_model_comparison()
+    # plot_model_comparison()
+    show_final_visualization(results, cms, roc_data)
 
 
 if __name__ == "__main__":
