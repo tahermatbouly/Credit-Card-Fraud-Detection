@@ -42,7 +42,7 @@ class RealtimeOutcome:
     fraud_probability: float
     decision: str  # ALLOW | REVIEW | BLOCK
     action: str  # LOG | ALERT | BLOCK
-    explanation: list[dict[str, Any]] | None
+    explanation: dict[str, Any] | None
     latency_ms: float
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -154,20 +154,21 @@ class RealtimeFraudEngine:
         prob = self._predict_proba_row(row)
         decision, action = self._tier(prob)
 
-        explanation: list[dict[str, Any]] | None = None
+        explanation: dict[str, Any] | None = None
         if not self.skip_explanations:
-            if decision == "BLOCK":
-                explanation = self.explainer.explain_tree_model(
-                    self.model,
-                    self.feature_names,
-                    row.iloc[0].reindex(self.feature_names).fillna(0).values,
-                )
-            elif decision == "REVIEW":
-                explanation = self.explainer.explain_tree_model(
-                    self.model,
-                    self.feature_names,
-                    row.iloc[0].reindex(self.feature_names).fillna(0).values,
-                )
+            explanation = self.explainer.explain_fraud_prediction(
+                self.model,
+                self.feature_names,
+                row.iloc[0].reindex(self.feature_names).fillna(0).values,
+                decision=decision,
+                fraud_probability=prob,
+                block_threshold=self.block_threshold,
+                alert_threshold=self.alert_threshold,
+                attack_type=None,
+                true_fraud_label=None,
+                pred_fraud_label=None,
+                include_feature_evidence=(decision != "ALLOW"),
+            )
 
         latency_ms = (time.perf_counter() - t0) * 1000.0
 
@@ -176,7 +177,7 @@ class RealtimeFraudEngine:
             fraud_probability=prob,
             decision=decision,
             action=action,
-            explanation=explanation if decision != "ALLOW" else None,
+            explanation=explanation,
             latency_ms=latency_ms,
             raw={},
         )
