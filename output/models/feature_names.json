@@ -1,0 +1,19 @@
+[
+  "step",
+  "amount",
+  "oldbalanceOrg",
+  "newbalanceOrig",
+  "oldbalanceDest",
+  "newbalanceDest",
+  "balance_diff_orig",
+  "balance_diff_dest",
+  "type_CASH_OUT",
+  "type_DEBIT",
+  "type_PAYMENT",
+  "type_TRANSFER",
+  "is_high_amount",
+  "amount_log",
+  "error_orig",
+  "error_dest",
+  "high_risk_transaction"
+]
