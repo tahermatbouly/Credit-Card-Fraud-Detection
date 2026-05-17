@@ -28,8 +28,244 @@ import plotly.graph_objects as go
 
 from dash import Dash, Input, Output, State, callback, dcc, html
 from dash.dash_table import DataTable
+from plotly.subplots import make_subplots
 
 from fraud_probability_audit import audit_predictions, save_audit_logs
+
+
+# =========================================================
+# Visual theme (fintech / SOC operations)
+# =========================================================
+
+THEME = {
+    "bg": "#0b1220",
+    "bg_gradient": "linear-gradient(145deg, #0b1220 0%, #111827 45%, #0f172a 100%)",
+    "surface": "#151f32",
+    "surface_raised": "#1c2942",
+    "border": "rgba(148, 163, 184, 0.18)",
+    "text": "#f1f5f9",
+    "text_muted": "#94a3b8",
+    "accent": "#38bdf8",
+    "accent_soft": "rgba(56, 189, 248, 0.15)",
+    "allow": "#22c55e",
+    "review": "#f59e0b",
+    "block": "#ef4444",
+    "tp": "#10b981",
+    "tn": "#0ea5e9",
+    "fp": "#fb923c",
+    "fn": "#f43f5e",
+    "font": "'Segoe UI', 'Inter', system-ui, sans-serif",
+    "mono": "'JetBrains Mono', 'Consolas', monospace",
+}
+
+PLOTLY_LAYOUT = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(family=THEME["font"], color=THEME["text"], size=12),
+    margin=dict(l=48, r=24, t=52, b=40),
+    title_font=dict(size=15, color=THEME["text"]),
+    xaxis=dict(
+        gridcolor="rgba(148,163,184,0.12)",
+        zerolinecolor="rgba(148,163,184,0.2)",
+        tickfont=dict(color=THEME["text_muted"]),
+        title_font=dict(color=THEME["text_muted"]),
+    ),
+    yaxis=dict(
+        gridcolor="rgba(148,163,184,0.12)",
+        zerolinecolor="rgba(148,163,184,0.2)",
+        tickfont=dict(color=THEME["text_muted"]),
+        title_font=dict(color=THEME["text_muted"]),
+    ),
+    legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color=THEME["text"])),
+)
+
+TABLE_STYLES = {
+    "style_table": {
+        "overflowX": "auto",
+        "borderRadius": "10px",
+        "border": f"1px solid {THEME['border']}",
+    },
+    "style_header": {
+        "backgroundColor": THEME["surface_raised"],
+        "color": THEME["accent"],
+        "fontWeight": "600",
+        "fontSize": "12px",
+        "textTransform": "uppercase",
+        "letterSpacing": "0.04em",
+        "border": "none",
+    },
+    "style_cell": {
+        "backgroundColor": THEME["surface"],
+        "color": THEME["text"],
+        "textAlign": "left",
+        "padding": "10px 12px",
+        "whiteSpace": "normal",
+        "height": "auto",
+        "fontSize": "12px",
+        "fontFamily": THEME["mono"],
+        "border": f"1px solid {THEME['border']}",
+    },
+    "style_data_conditional": [
+        {"if": {"filter_query": "{decision} = BLOCK"}, "backgroundColor": "rgba(239,68,68,0.18)", "color": "#fecaca"},
+        {"if": {"filter_query": "{decision} = REVIEW"}, "backgroundColor": "rgba(245,158,11,0.15)", "color": "#fde68a"},
+        {"if": {"filter_query": "{decision} = ALLOW"}, "backgroundColor": "rgba(34,197,94,0.12)", "color": "#bbf7d0"},
+        {"if": {"state": "active"}, "backgroundColor": THEME["accent_soft"], "border": f"1px solid {THEME['accent']}"},
+    ],
+}
+
+
+def _card(children, *, style=None):
+    base = {
+        "background": THEME["surface"],
+        "border": f"1px solid {THEME['border']}",
+        "borderRadius": "14px",
+        "padding": "18px 20px",
+        "boxShadow": "0 8px 32px rgba(0,0,0,0.35)",
+    }
+    if style:
+        base.update(style)
+    return html.Div(children=children, style=base)
+
+
+def _section_title(text: str, subtitle: str | None = None):
+    parts = [
+        html.H2(
+            text,
+            style={
+                "margin": "0 0 6px 0",
+                "fontSize": "17px",
+                "fontWeight": "600",
+                "color": THEME["text"],
+                "letterSpacing": "-0.02em",
+            },
+        )
+    ]
+    if subtitle:
+        parts.append(
+            html.P(
+                subtitle,
+                style={"margin": "0 0 14px 0", "fontSize": "13px", "color": THEME["text_muted"]},
+            )
+        )
+    return html.Div(parts)
+
+
+def _kpi_card(label: str, value: str, *, accent: str, hint: str = ""):
+    return html.Div(
+        style={
+            "background": f"linear-gradient(135deg, {THEME['surface_raised']} 0%, {THEME['surface']} 100%)",
+            "border": f"1px solid {THEME['border']}",
+            "borderLeft": f"4px solid {accent}",
+            "borderRadius": "12px",
+            "padding": "16px 18px",
+            "minHeight": "88px",
+        },
+        children=[
+            html.Div(label, style={"fontSize": "11px", "color": THEME["text_muted"], "textTransform": "uppercase", "letterSpacing": "0.06em"}),
+            html.Div(value, style={"fontSize": "26px", "fontWeight": "700", "color": THEME["text"], "margin": "6px 0 4px 0"}),
+            html.Div(hint, style={"fontSize": "12px", "color": accent}) if hint else None,
+        ],
+    )
+
+
+def _status_banner(message: str, *, variant: str = "info"):
+    colors = {
+        "info": (THEME["accent_soft"], THEME["accent"]),
+        "error": ("rgba(239,68,68,0.15)", THEME["block"]),
+        "success": ("rgba(34,197,94,0.12)", THEME["allow"]),
+    }
+    bg, border = colors.get(variant, colors["info"])
+    return html.Div(
+        message,
+        style={
+            "padding": "12px 18px",
+            "borderRadius": "10px",
+            "background": bg,
+            "border": f"1px solid {border}",
+            "color": THEME["text"],
+            "fontSize": "14px",
+            "fontWeight": "500",
+        },
+    )
+
+
+def _build_kpi_row(
+    *,
+    total_tx: int,
+    allow_count: int,
+    review_count: int,
+    block_count: int,
+    counts: dict,
+    accuracy: float,
+    recall: float,
+    avg_latency: float,
+):
+    return html.Div(
+        style={
+            "display": "grid",
+            "gridTemplateColumns": "repeat(auto-fit, minmax(160px, 1fr))",
+            "gap": "14px",
+            "marginBottom": "22px",
+        },
+        children=[
+            _kpi_card("Transactions", f"{total_tx:,}", accent=THEME["accent"], hint="Streamed in real time"),
+            _kpi_card("Blocked", f"{block_count:,}", accent=THEME["block"], hint=f"Review: {review_count:,} · Allow: {allow_count:,}"),
+            _kpi_card("Fraud caught", f"{counts['TP']}", accent=THEME["tp"], hint=f"Missed (FN): {counts['FN']}"),
+            _kpi_card("Accuracy", f"{accuracy:.1%}", accent=THEME["tn"], hint=f"Recall: {recall:.1%}"),
+            _kpi_card("Avg latency", f"{avg_latency:.2f} ms", accent="#a78bfa", hint="Per transaction score"),
+        ],
+    )
+
+
+def _attack_explanation_cards(per_attack_summaries: list) -> html.Div:
+    if not per_attack_summaries:
+        return html.P("Run a simulation to see attack scenario breakdowns.", style={"color": THEME["text_muted"]})
+
+    cards = []
+    for s in per_attack_summaries:
+        m = s["metrics"]
+        dc = s["decision_counts"]
+        name = s["attack_name"].replace("_", " ").title()
+        cards.append(
+            html.Div(
+                style={
+                    "background": THEME["surface_raised"],
+                    "border": f"1px solid {THEME['border']}",
+                    "borderRadius": "12px",
+                    "padding": "16px",
+                    "marginBottom": "12px",
+                },
+                children=[
+                    html.Div(
+                        style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "8px"},
+                        children=[
+                            html.Strong(name, style={"color": THEME["accent"], "fontSize": "14px"}),
+                            html.Span(
+                                f"F1 {m['f1']:.2%}",
+                                style={
+                                    "fontSize": "12px",
+                                    "padding": "4px 10px",
+                                    "borderRadius": "20px",
+                                    "background": THEME["accent_soft"],
+                                    "color": THEME["accent"],
+                                },
+                            ),
+                        ],
+                    ),
+                    html.P(s["attack_description"], style={"fontSize": "13px", "color": THEME["text_muted"], "margin": "0 0 10px 0", "lineHeight": "1.5"}),
+                    html.Div(
+                        style={"display": "flex", "gap": "16px", "flexWrap": "wrap", "fontSize": "12px", "color": THEME["text"]},
+                        children=[
+                            html.Span([html.Span("● ", style={"color": THEME["allow"]}), f"Allow {dc['ALLOW']}"]),
+                            html.Span([html.Span("● ", style={"color": THEME["review"]}), f"Review {dc['REVIEW']}"]),
+                            html.Span([html.Span("● ", style={"color": THEME["block"]}), f"Block {dc['BLOCK']}"]),
+                            html.Span(f"· {m['total_transactions']} tx · {m['avg_latency_ms']:.1f} ms avg"),
+                        ],
+                    ),
+                ],
+            )
+        )
+    return html.Div(cards)
 
 
 # =========================================================
@@ -472,36 +708,200 @@ def _run_realtime_stream(
 # =========================================================
 
 
-def _confusion_figure(cm: np.ndarray):
-    z = cm.astype(int).tolist()
+def _apply_plotly_theme(fig: go.Figure, title: str, height: int = 360) -> go.Figure:
+    fig.update_layout(**PLOTLY_LAYOUT, title=dict(text=title, x=0.02, xanchor="left"), height=height)
+    return fig
+
+
+def _confusion_figure(cm: np.ndarray) -> go.Figure:
+    """Annotated 2×2 matrix with fraud-ops semantics (TN, FP, FN, TP)."""
     labels = ["Legitimate", "Fraud"]
+    cell_labels = [
+        ["True Negative", "False Positive"],
+        ["False Negative", "True Positive"],
+    ]
+    colors = [
+        [THEME["tn"], THEME["fp"]],
+        [THEME["fn"], THEME["tp"]],
+    ]
+    z_text = [[str(int(cm[i, j])) for j in range(2)] for i in range(2)]
+
+    fig = go.Figure()
+    for i in range(2):
+        for j in range(2):
+            val = int(cm[i, j])
+            fig.add_trace(
+                go.Scatter(
+                    x=[j],
+                    y=[1 - i],
+                    mode="markers+text",
+                    marker=dict(
+                        size=110,
+                        color=colors[i][j],
+                        opacity=0.92,
+                        line=dict(width=2, color="rgba(255,255,255,0.25)"),
+                    ),
+                    text=[f"{val}\n{cell_labels[i][j]}"],
+                    textposition="middle center",
+                    textfont=dict(color="#fff", size=13),
+                    hovertemplate=(
+                        f"{cell_labels[i][j]}<br>Count: {val}<br>"
+                        f"Actual: {labels[i]} · Predicted: {labels[j]}<extra></extra>"
+                    ),
+                    showlegend=False,
+                )
+            )
+
+    fig.update_layout(
+        xaxis=dict(
+            tickvals=[0, 1],
+            ticktext=labels,
+            title="Predicted class",
+            range=[-0.55, 1.55],
+            constrain="domain",
+        ),
+        yaxis=dict(
+            tickvals=[0, 1],
+            ticktext=list(reversed(labels)),
+            title="Actual class",
+            range=[-0.55, 1.55],
+            scaleanchor="x",
+            scaleratio=1,
+        ),
+    )
+    return _apply_plotly_theme(fig, "Detection outcomes", height=380)
+
+
+def _decision_pie_figure(allow: int, review: int, block: int) -> go.Figure:
+    labels = ["ALLOW", "REVIEW", "BLOCK"]
+    values = [allow, review, block]
+    colors = [THEME["allow"], THEME["review"], THEME["block"]]
 
     fig = go.Figure(
-        data=go.Heatmap(
-            z=z,
-            x=labels,
-            y=labels,
-            colorscale="Blues",
-            text=z,
-            texttemplate="%{text}",
-            hovertemplate=(
-                "Actual %{y}<br>Predicted %{x}<br>Count %{z}<extra></extra>"
+        data=[
+            go.Pie(
+                labels=labels,
+                values=values,
+                hole=0.55,
+                marker=dict(colors=colors, line=dict(color=THEME["surface"], width=2)),
+                textinfo="label+percent",
+                textfont=dict(color=THEME["text"], size=12),
+                hovertemplate="<b>%{label}</b><br>%{value} tx (%{percent})<extra></extra>",
+            )
+        ]
+    )
+    fig.update_layout(showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.12))
+    return _apply_plotly_theme(fig, "Operational decisions", height=380)
+
+
+def _performance_figure(
+    *,
+    accuracy: float,
+    precision: float,
+    recall: float,
+    f1: float,
+    counts: dict,
+) -> go.Figure:
+    fig = make_subplots(
+        rows=1,
+        cols=2,
+        subplot_titles=("Model quality", "Error breakdown"),
+        horizontal_spacing=0.14,
+        specs=[[{"type": "bar"}, {"type": "bar"}]],
+    )
+
+    metrics = ["Accuracy", "Precision", "Recall", "F1"]
+    scores = [accuracy, precision, recall, f1]
+    fig.add_trace(
+        go.Bar(
+            x=metrics,
+            y=scores,
+            marker=dict(
+                color=[THEME["accent"], THEME["tp"], THEME["review"], "#a78bfa"],
+                line=dict(width=0),
             ),
+            text=[f"{s:.1%}" for s in scores],
+            textposition="outside",
+            textfont=dict(color=THEME["text"]),
+            hovertemplate="%{x}: %{y:.2%}<extra></extra>",
+        ),
+        row=1,
+        col=1,
+    )
+    fig.update_yaxes(range=[0, 1.08], tickformat=".0%", row=1, col=1)
+
+    err_labels = ["True +", "True −", "False +", "False −"]
+    err_vals = [counts["TP"], counts["TN"], counts["FP"], counts["FN"]]
+    err_colors = [THEME["tp"], THEME["tn"], THEME["fp"], THEME["fn"]]
+    fig.add_trace(
+        go.Bar(
+            x=err_labels,
+            y=err_vals,
+            marker=dict(color=err_colors),
+            text=err_vals,
+            textposition="outside",
+            textfont=dict(color=THEME["text"]),
+            hovertemplate="%{x}: %{y}<extra></extra>",
+        ),
+        row=1,
+        col=2,
+    )
+
+    for ann in fig.layout.annotations:
+        ann.font.color = THEME["text_muted"]
+        ann.font.size = 12
+
+    fig = _apply_plotly_theme(fig, "Performance snapshot", height=380)
+    return fig
+
+
+def _latency_figure(latencies: List[float]) -> go.Figure:
+    if not latencies:
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No latency data yet",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=0.5,
+            showarrow=False,
+            font=dict(color=THEME["text_muted"], size=14),
         )
+        return _apply_plotly_theme(fig, "Scoring latency", height=280)
+
+    arr = np.asarray(latencies, dtype=float)
+    fig = go.Figure(
+        data=[
+            go.Histogram(
+                x=arr,
+                nbinsx=min(40, max(10, len(arr) // 20)),
+                marker=dict(color=THEME["accent"], line=dict(color=THEME["surface"], width=1)),
+                hovertemplate="%{x:.2f} ms · %{y} transactions<extra></extra>",
+            )
+        ]
     )
     fig.update_layout(
-        title="Confusion Matrix",
-        xaxis_title="Predicted",
-        yaxis_title="Actual",
-        height=400,
+        xaxis_title="Latency (ms)",
+        yaxis_title="Count",
+        bargap=0.05,
     )
-    return fig
+    p95 = float(np.percentile(arr, 95))
+    fig.add_vline(x=p95, line_dash="dash", line_color=THEME["review"], annotation_text=f"p95: {p95:.1f} ms")
+    return _apply_plotly_theme(fig, "Scoring latency distribution", height=280)
 
 
-def _empty_figure(title: str = "No simulation yet"):
+def _empty_figure(title: str = "Awaiting simulation run") -> go.Figure:
     fig = go.Figure()
-    fig.update_layout(title=title, height=400)
-    return fig
+    fig.add_annotation(
+        text=title,
+        xref="paper",
+        yref="paper",
+        x=0.5,
+        y=0.5,
+        showarrow=False,
+        font=dict(color=THEME["text_muted"], size=14),
+    )
+    return _apply_plotly_theme(fig, title, height=360)
 
 
 # =========================================================
@@ -509,124 +909,236 @@ def _empty_figure(title: str = "No simulation yet"):
 # =========================================================
 
 
+def _badge_style(color: str) -> dict:
+    return {
+        "fontSize": "11px",
+        "padding": "6px 12px",
+        "borderRadius": "20px",
+        "background": "rgba(255,255,255,0.06)",
+        "border": f"1px solid {color}",
+        "color": color,
+    }
+
+
+def _control_label(text: str):
+    return html.Label(
+        text,
+        style={
+            "display": "block",
+            "fontSize": "11px",
+            "fontWeight": "600",
+            "color": THEME["text_muted"],
+            "textTransform": "uppercase",
+            "letterSpacing": "0.05em",
+            "marginBottom": "6px",
+        },
+    )
+
+
+def _control_input_style():
+    return {
+        "width": "100%",
+        "padding": "10px 12px",
+        "borderRadius": "8px",
+        "border": f"1px solid {THEME['border']}",
+        "background": THEME["surface_raised"],
+        "color": THEME["text"],
+        "fontSize": "14px",
+    }
+
+
 def create_app():
     app = Dash(__name__)
-    app.title = "Real-Time Fraud Attack Simulator"
+    app.title = "FraudShield · Real-Time Simulation"
 
     app.layout = html.Div(
         style={
-            "fontFamily": "Arial",
-            "padding": "20px",
-            "maxWidth": "1650px",
-            "margin": "0 auto",
+            "fontFamily": THEME["font"],
+            "minHeight": "100vh",
+            "background": THEME["bg_gradient"],
+            "color": THEME["text"],
+            "padding": "24px 28px 48px",
         },
         children=[
             dcc.Store(id="audit-store", data=[]),
-            html.H1("🚨 Real-Time Fraud Attack Simulator"),
-            html.P(
-                "Choose the attack type, then stream transactions row-by-row through the model. "
-                "Each transaction gets ALLOW / REVIEW / BLOCK."
-            ),
+            # —— Header ——
             html.Div(
                 style={
-                    "display": "grid",
-                    "gridTemplateColumns": "2fr 1fr 1fr 1fr 1fr",
-                    "gap": "15px",
-                    "marginBottom": "20px",
-                    "alignItems": "end",
+                    "display": "flex",
+                    "justifyContent": "space-between",
+                    "alignItems": "flex-end",
+                    "flexWrap": "wrap",
+                    "gap": "16px",
+                    "marginBottom": "24px",
+                    "paddingBottom": "20px",
+                    "borderBottom": f"1px solid {THEME['border']}",
                 },
                 children=[
                     html.Div(
                         children=[
-                            html.Label("Choose Attack Type"),
-                            dcc.Dropdown(
-                                id="attack-dropdown",
-                                options=ATTACK_OPTIONS,
-                                value="01_normal_baseline",
-                                clearable=False,
+                            html.Div(
+                                "FRAUDSHIELD",
+                                style={
+                                    "fontSize": "11px",
+                                    "fontWeight": "700",
+                                    "letterSpacing": "0.2em",
+                                    "color": THEME["accent"],
+                                    "marginBottom": "8px",
+                                },
+                            ),
+                            html.H1(
+                                "Real-Time Attack Simulator",
+                                style={
+                                    "margin": 0,
+                                    "fontSize": "clamp(1.6rem, 3vw, 2.1rem)",
+                                    "fontWeight": "700",
+                                    "letterSpacing": "-0.03em",
+                                },
+                            ),
+                            html.P(
+                                "Stream PaySim transactions through your trained model. "
+                                "Each row receives ALLOW · REVIEW · BLOCK based on live fraud probability.",
+                                style={"margin": "10px 0 0", "color": THEME["text_muted"], "maxWidth": "640px", "lineHeight": "1.55"},
                             ),
                         ]
                     ),
                     html.Div(
+                        style={"display": "flex", "gap": "10px", "flexWrap": "wrap"},
                         children=[
-                            html.Label("Alert Threshold"),
-                            dcc.Input(
-                                id="alert-threshold-input",
-                                type="number",
-                                value=0.12,
-                                min=0.0,
-                                max=0.99,
-                                step=0.01,
-                                style={"width": "100%"},
-                            ),
-                        ]
-                    ),
-                    html.Div(
-                        children=[
-                            html.Label("Block Threshold"),
-                            dcc.Input(
-                                id="block-threshold-input",
-                                type="number",
-                                value=0.3,
-                                min=0.01,
-                                max=0.99,
-                                step=0.01,
-                                style={"width": "100%"},
-                            ),
-                        ]
-                    ),
-                    html.Div(
-                        children=[
-                            html.Label("Flood Repeats"),
-                            dcc.Input(
-                                id="flood-input",
-                                type="number",
-                                value=8,
-                                min=1,
-                                max=50,
-                                step=1,
-                                style={"width": "100%"},
-                            ),
-                        ]
-                    ),
-                    html.Button(
-                        "▶ Run Real-Time Simulation",
-                        id="run-btn",
-                        n_clicks=0,
-                        style={
-                            "padding": "12px 20px",
-                            "cursor": "pointer",
-                            "fontSize": "16px",
-                            "height": "45px",
-                        },
+                            html.Span("● Live scoring", style=_badge_style(THEME["allow"])),
+                            html.Span("● 8 attack vectors", style=_badge_style(THEME["accent"])),
+                            html.Span("● Row audit", style=_badge_style(THEME["review"])),
+                        ],
                     ),
                 ],
             ),
-            html.Div(
-                id="status-msg",
-                style={"marginBottom": "20px", "fontWeight": "bold"},
+            # —— Controls ——
+            _card(
+                [
+                    html.Div(
+                        style={
+                            "display": "grid",
+                            "gridTemplateColumns": "2fr repeat(3, 1fr) auto",
+                            "gap": "16px",
+                            "alignItems": "end",
+                        },
+                        children=[
+                            html.Div(
+                                children=[
+                                    _control_label("Attack scenario"),
+                                    dcc.Dropdown(
+                                        id="attack-dropdown",
+                                        options=ATTACK_OPTIONS,
+                                        value="01_normal_baseline",
+                                        clearable=False,
+                                        style={"color": "#0f172a"},
+                                    ),
+                                ]
+                            ),
+                            html.Div(
+                                children=[
+                                    _control_label("Alert ≥ review"),
+                                    dcc.Input(
+                                        id="alert-threshold-input",
+                                        type="number",
+                                        value=0.12,
+                                        min=0.0,
+                                        max=0.99,
+                                        step=0.01,
+                                        style=_control_input_style(),
+                                    ),
+                                ]
+                            ),
+                            html.Div(
+                                children=[
+                                    _control_label("Block ≥ stop"),
+                                    dcc.Input(
+                                        id="block-threshold-input",
+                                        type="number",
+                                        value=0.3,
+                                        min=0.01,
+                                        max=0.99,
+                                        step=0.01,
+                                        style=_control_input_style(),
+                                    ),
+                                ]
+                            ),
+                            html.Div(
+                                children=[
+                                    _control_label("Flood repeats"),
+                                    dcc.Input(
+                                        id="flood-input",
+                                        type="number",
+                                        value=8,
+                                        min=1,
+                                        max=50,
+                                        step=1,
+                                        style=_control_input_style(),
+                                    ),
+                                ]
+                            ),
+                            html.Button(
+                                "Run simulation",
+                                id="run-btn",
+                                n_clicks=0,
+                                style={
+                                    "padding": "12px 28px",
+                                    "cursor": "pointer",
+                                    "fontSize": "14px",
+                                    "fontWeight": "600",
+                                    "height": "42px",
+                                    "border": "none",
+                                    "borderRadius": "10px",
+                                    "background": f"linear-gradient(135deg, {THEME['accent']} 0%, #0284c7 100%)",
+                                    "color": "#0b1220",
+                                    "boxShadow": "0 4px 20px rgba(56,189,248,0.35)",
+                                },
+                            ),
+                        ],
+                    ),
+                ],
+                style={"marginBottom": "18px"},
             ),
+            html.Div(id="status-msg", style={"marginBottom": "18px"}),
+            html.Div(id="kpi-row"),
             dcc.Loading(
-                type="circle",
+                type="dot",
+                color=THEME["accent"],
                 children=[
                     html.Div(
                         style={
                             "display": "grid",
-                            "gridTemplateColumns": "1.25fr 0.75fr",
-                            "gap": "20px",
+                            "gridTemplateColumns": "1.2fr 0.8fr",
+                            "gap": "18px",
+                            "marginBottom": "18px",
                         },
                         children=[
-                            html.Div(
-                                children=[
-                                    html.H2("Real-Time Predictions"),
-                                    html.Div(id="predictions-table-wrap"),
+                            _card(
+                                [
+                                    _section_title(
+                                        "Transaction stream",
+                                        "Click a row below for the full probability audit.",
+                                    ),
+                                    html.Div(
+                                        id="predictions-table-wrap",
+                                        children=[
+                                            DataTable(
+                                                id="predictions-table",
+                                                columns=[],
+                                                data=[],
+                                                page_size=12,
+                                                **TABLE_STYLES,
+                                            ),
+                                        ],
+                                    ),
                                 ]
                             ),
                             html.Div(
+                                style={"display": "flex", "flexDirection": "column", "gap": "18px"},
                                 children=[
-                                    html.H2("Confusion Matrix"),
-                                    dcc.Graph(id="cm-graph", figure=_empty_figure()),
-                                ]
+                                    _card([dcc.Graph(id="cm-graph", figure=_empty_figure("Detection outcomes"), config={"displayModeBar": False})]),
+                                    _card([dcc.Graph(id="decision-chart", figure=_empty_figure("Operational decisions"), config={"displayModeBar": False})]),
+                                ],
                             ),
                         ],
                     ),
@@ -634,64 +1146,62 @@ def create_app():
                         style={
                             "display": "grid",
                             "gridTemplateColumns": "1fr 1fr",
-                            "gap": "20px",
-                            "marginTop": "30px",
+                            "gap": "18px",
+                            "marginBottom": "18px",
                         },
                         children=[
-                            html.Div(
-                                children=[
-                                    html.H2("System Metrics"),
-                                    html.Div(id="fpfn-metrics"),
-                                ]
-                            ),
-                            html.Div(
-                                children=[
-                                    html.H2("Live Event Logs"),
+                            _card([dcc.Graph(id="performance-chart", figure=_empty_figure("Performance snapshot"), config={"displayModeBar": False})]),
+                            _card(
+                                [
+                                    _section_title("Live event log", "Most recent scored transactions."),
                                     html.Pre(
                                         id="log-pre",
+                                        children="Waiting for simulation…",
                                         style={
-                                            "backgroundColor": "#111",
-                                            "color": "#0f0",
-                                            "padding": "15px",
-                                            "height": "500px",
-                                            "overflowY": "scroll",
-                                            "fontSize": "12px",
+                                            "background": "#050a14",
+                                            "color": "#7dd3fc",
+                                            "padding": "16px",
+                                            "height": "320px",
+                                            "overflowY": "auto",
+                                            "fontSize": "11px",
+                                            "fontFamily": THEME["mono"],
+                                            "borderRadius": "8px",
+                                            "border": f"1px solid {THEME['border']}",
+                                            "margin": 0,
+                                            "lineHeight": "1.55",
                                         },
                                     ),
                                 ]
                             ),
                         ],
                     ),
-                    html.Div(
-                        style={"marginTop": "40px"},
-                        children=[
-                            html.H2("Selected Attack Explanation"),
-                            html.Div(
-                                id="attack-explanations",
-                                style={
-                                    "padding": "20px",
-                                    "backgroundColor": "#f5f5f5",
-                                    "borderRadius": "8px",
-                                    "whiteSpace": "pre-wrap",
-                                },
-                            ),
+                    _card(
+                        [
+                            _section_title("Scoring latency"),
+                            dcc.Graph(id="latency-chart", figure=_empty_figure("Latency"), config={"displayModeBar": False}),
                         ],
+                        style={"marginBottom": "18px"},
                     ),
-                    html.Div(
-                        style={"marginTop": "40px"},
-                        children=[
-                            html.H2("🔍 Interactive Fraud Probability Audit"),
-                            html.P("Click on any row in the Predictions Table above to show a detailed explanation of the decision, probability source, formula, and top feature evidence."),
+                    _card(
+                        [
+                            _section_title("Attack scenario intelligence"),
+                            html.Div(id="attack-explanations"),
+                        ],
+                        style={"marginBottom": "18px"},
+                    ),
+                    _card(
+                        [
+                            _section_title(
+                                "Transaction audit",
+                                "Select any row in the stream table for probability breakdown and feature evidence.",
+                            ),
                             html.Div(
                                 id="audit-details-wrap",
-                                style={
-                                    "padding": "20px",
-                                    "backgroundColor": "#f9f9f9",
-                                    "border": "1px solid #ddd",
-                                    "borderRadius": "8px",
-                                    "minHeight": "100px",
-                                },
-                                children="No transaction selected. Click on a row in the Predictions Table above to audit."
+                                style={"minHeight": "120px"},
+                                children=html.P(
+                                    "No transaction selected.",
+                                    style={"color": THEME["text_muted"], "margin": 0},
+                                ),
                             ),
                         ],
                     ),
@@ -702,9 +1212,13 @@ def create_app():
 
     @callback(
         Output("status-msg", "children"),
-        Output("predictions-table-wrap", "children"),
+        Output("kpi-row", "children"),
+        Output("predictions-table", "data"),
+        Output("predictions-table", "columns"),
         Output("cm-graph", "figure"),
-        Output("fpfn-metrics", "children"),
+        Output("decision-chart", "figure"),
+        Output("performance-chart", "figure"),
+        Output("latency-chart", "figure"),
         Output("log-pre", "children"),
         Output("attack-explanations", "children"),
         Output("audit-store", "data"),
@@ -723,13 +1237,21 @@ def create_app():
         flood_repeats = int(flood_repeats)
 
         if alert_threshold > block_threshold:
+            empty = _empty_figure("Invalid thresholds")
             return (
-                "Error: Alert threshold must be <= Block threshold.",
+                _status_banner(
+                    "Alert threshold must be ≤ block threshold.",
+                    variant="error",
+                ),
                 html.Div(),
-                _empty_figure("Invalid thresholds"),
-                html.Div(),
-                "",
-                "Alert threshold must be lower than or equal to block threshold.",
+                [],
+                [],
+                empty,
+                empty,
+                empty,
+                empty,
+                "Fix thresholds and run again.",
+                html.P("Invalid configuration.", style={"color": THEME["text_muted"]}),
                 [],
             )
 
@@ -797,10 +1319,14 @@ def create_app():
         cm, counts = _confusion_counts(all_y_true, all_y_pred)
         total_tx = len(all_rows)
 
-        status = (
-            f"Processed {total_tx} transactions in real-time mode. "
-            f"Selected attack: {selected_attack}. "
-            f"Alert={alert_threshold}, Block={block_threshold}."
+        attack_label = next(
+            (o["label"] for o in ATTACK_OPTIONS if o["value"] == selected_attack),
+            selected_attack,
+        )
+        status = _status_banner(
+            f"✓ Scored {total_tx:,} transactions · {attack_label} · "
+            f"review ≥ {alert_threshold:.2f} · block ≥ {block_threshold:.2f}",
+            variant="success",
         )
 
         # Predictions table
@@ -814,37 +1340,10 @@ def create_app():
         else:
             df_table = pd.DataFrame()
 
-        table = DataTable(
-            id="predictions-table",
-            columns=[{"name": c, "id": c} for c in df_table.columns],
-            data=df_table.head(500).to_dict("records"),
-            page_size=12,
-            style_table={"overflowX": "auto"},
-            style_cell={
-                "textAlign": "left",
-                "padding": "8px",
-                "whiteSpace": "normal",
-                "height": "auto",
-                "fontSize": "12px",
-            },
-            style_header={"fontWeight": "bold"},
-            style_data_conditional=[
-                {
-                    "if": {"filter_query": "{decision} = BLOCK"},
-                    "backgroundColor": "#ffe6e6",
-                },
-                {
-                    "if": {"filter_query": "{decision} = REVIEW"},
-                    "backgroundColor": "#fff4cc",
-                },
-                {
-                    "if": {"filter_query": "{decision} = ALLOW"},
-                    "backgroundColor": "#e9ffe9",
-                },
-            ],
-        )
+        table_columns = [{"name": c, "id": c} for c in df_table.columns]
+        table_data = df_table.head(500).to_dict("records")
 
-        fig = _confusion_figure(cm)
+        fig_cm = _confusion_figure(cm)
 
         allow_count = sum(1 for r in all_rows if r["decision"] == "ALLOW")
         review_count = sum(1 for r in all_rows if r["decision"] == "REVIEW")
@@ -854,67 +1353,57 @@ def create_app():
         precision = _safe_div(counts["TP"], counts["TP"] + counts["FP"])
         recall = _safe_div(counts["TP"], counts["TP"] + counts["FN"])
         f1 = _safe_div(2 * precision * recall, precision + recall)
+        avg_lat = float(np.mean(all_latencies)) if all_latencies else 0.0
 
-        metrics = html.Div(
-            children=[
-                html.Ul(
-                    [
-                        html.Li(f"Total Transactions: {total_tx}"),
-                        html.Li(f"ALLOW: {allow_count}"),
-                        html.Li(f"REVIEW: {review_count}"),
-                        html.Li(f"BLOCK: {block_count}"),
-                        html.Li(f"True Positives: {counts['TP']}"),
-                        html.Li(f"True Negatives: {counts['TN']}"),
-                        html.Li(f"False Positives: {counts['FP']}"),
-                        html.Li(f"False Negatives: {counts['FN']}"),
-                        html.Li(f"Accuracy: {accuracy:.4f}"),
-                        html.Li(f"Precision: {precision:.4f}"),
-                        html.Li(f"Recall: {recall:.4f}"),
-                        html.Li(f"F1: {f1:.4f}"),
-                        html.Li(f"Average Latency: {np.mean(all_latencies):.3f} ms" if all_latencies else "Average Latency: 0 ms"),
-                        html.Li(f"P95 Latency: {np.percentile(all_latencies, 95):.3f} ms" if all_latencies else "P95 Latency: 0 ms"),
-                    ]
-                )
-            ]
+        kpi_row = _build_kpi_row(
+            total_tx=total_tx,
+            allow_count=allow_count,
+            review_count=review_count,
+            block_count=block_count,
+            counts=counts,
+            accuracy=accuracy,
+            recall=recall,
+            avg_latency=avg_lat,
         )
 
+        fig_decisions = _decision_pie_figure(allow_count, review_count, block_count)
+        fig_performance = _performance_figure(
+            accuracy=accuracy,
+            precision=precision,
+            recall=recall,
+            f1=f1,
+            counts=counts,
+        )
+        fig_latency = _latency_figure(all_latencies)
+
         logs = []
-        for i, r in enumerate(all_rows[:500]):
+        for i, r in enumerate(all_rows[:120]):
+            icon = {"ALLOW": "✓", "REVIEW": "!", "BLOCK": "✕"}.get(r["decision"], "·")
             logs.append(
-                f"""
-TX-{i}
-ATTACK: {r['attack']}
-PROBABILITY: {r['probability']:.4f}
-DECISION: {r['decision']}
-ACTION: {r['action']}
-TRUE LABEL: {r['true_fraud']}
-PREDICTION: {r['pred_fraud']}
-LATENCY: {r['latency_ms']:.3f} ms
-================================================
-"""
+                f"[{icon}] {r.get('tx_id', f'TX-{i}')}  "
+                f"P={r['probability']:.4f}  {r['decision']:<6}  "
+                f"truth={r['true_fraud']} pred={r['pred_fraud']}  "
+                f"{r['latency_ms']:.2f}ms"
             )
-        log_text = "\n".join(logs)
+        log_text = "\n".join(logs) if logs else "No events."
 
-        attack_text_parts = []
-        for s in per_attack_summaries:
-            m = s["metrics"]
-            dc = s["decision_counts"]
-            attack_text_parts.append(
-                f"=== {s['attack_name']} ===\n\n"
-                f"{s['attack_description']}\n\n"
-                f"Transactions: {m['total_transactions']}\n"
-                f"ALLOW / REVIEW / BLOCK: {dc['ALLOW']} / {dc['REVIEW']} / {dc['BLOCK']}\n"
-                f"Accuracy: {m['accuracy']:.4f}\n"
-                f"Precision: {m['precision']:.4f}\n"
-                f"Recall: {m['recall']:.4f}\n"
-                f"F1: {m['f1']:.4f}\n"
-                f"Average latency: {m['avg_latency_ms']:.3f} ms\n"
-            )
-        attack_text = "\n".join(attack_text_parts)
+        attack_cards = _attack_explanation_cards(per_attack_summaries)
 
-        return status, table, fig, metrics, log_text, attack_text, audit_records
+        return (
+            status,
+            kpi_row,
+            table_data,
+            table_columns,
+            fig_cm,
+            fig_decisions,
+            fig_performance,
+            fig_latency,
+            log_text,
+            attack_cards,
+            audit_records,
+        )
 
-    @app.callback(
+    @callback(
         Output("audit-details-wrap", "children"),
         Input("predictions-table", "active_cell"),
         State("predictions-table", "data"),
@@ -923,7 +1412,10 @@ LATENCY: {r['latency_ms']:.3f} ms
     )
     def display_audit_details(active_cell, table_data, audit_records):
         if not active_cell or not table_data or not audit_records:
-            return "No transaction selected. Click on a row in the Predictions Table above to audit."
+            return html.P(
+                "Select a row in the transaction stream to open the probability audit.",
+                style={"color": THEME["text_muted"], "margin": 0},
+            )
         
         row_idx = active_cell["row"]
         if row_idx >= len(table_data):
@@ -959,111 +1451,117 @@ LATENCY: {r['latency_ms']:.3f} ms
             
         decision = matched_record.get("decision", "UNKNOWN")
         color_map = {
-            "ALLOW": "#2ecc71",
-            "REVIEW": "#f39c12",
-            "BLOCK": "#e74c3c"
+            "ALLOW": THEME["allow"],
+            "REVIEW": THEME["review"],
+            "BLOCK": THEME["block"],
         }
-        color = color_map.get(decision, "#7f8c8d")
+        color = color_map.get(decision, THEME["text_muted"])
         
         top_features = matched_record.get("top_features", "")
         reason_text = matched_record.get("reason", "")
         
         features_list = [f.strip() for f in top_features.split(",") if f.strip()]
         
-        # Build explanation view with elite UI aesthetics
+        prob = matched_record.get("fraud_probability", 0)
         return html.Div(
-            style={
-                "fontFamily": "Segoe UI, Arial, sans-serif",
-                "color": "#333",
-            },
             children=[
                 html.Div(
                     style={
                         "display": "flex",
                         "justifyContent": "space-between",
                         "alignItems": "center",
-                        "borderBottom": "2px solid #eee",
-                        "paddingBottom": "12px",
-                        "marginBottom": "15px"
+                        "borderBottom": f"1px solid {THEME['border']}",
+                        "paddingBottom": "14px",
+                        "marginBottom": "16px",
                     },
                     children=[
-                        html.Div([
-                            html.H3(f"Transaction ID: {tx_id}", style={"margin": "0", "color": "#2c3e50", "fontWeight": "600"}),
-                            html.Span(f"Scenario: {matched_record.get('scenario')}", style={"fontSize": "12px", "color": "#7f8c8d", "marginTop": "4px", "display": "block"})
-                        ]),
+                        html.Div(
+                            children=[
+                                html.H3(
+                                    tx_id,
+                                    style={"margin": 0, "color": THEME["text"], "fontSize": "16px", "fontFamily": THEME["mono"]},
+                                ),
+                                html.Span(
+                                    matched_record.get("scenario", ""),
+                                    style={"fontSize": "12px", "color": THEME["text_muted"], "marginTop": "4px", "display": "block"},
+                                ),
+                            ]
+                        ),
                         html.Span(
                             decision,
                             style={
                                 "backgroundColor": color,
-                                "color": "white",
-                                "padding": "6px 16px",
-                                "borderRadius": "20px",
-                                "fontWeight": "bold",
-                                "fontSize": "14px",
-                                "boxShadow": "0 2px 5px rgba(0,0,0,0.1)"
-                            }
-                        )
-                    ]
+                                "color": "#0b1220",
+                                "padding": "8px 18px",
+                                "borderRadius": "24px",
+                                "fontWeight": "700",
+                                "fontSize": "13px",
+                                "letterSpacing": "0.04em",
+                            },
+                        ),
+                    ],
                 ),
                 html.Div(
-                    style={
-                        "display": "grid",
-                        "gridTemplateColumns": "1fr 1fr",
-                        "gap": "20px"
-                    },
+                    style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "16px"},
                     children=[
                         html.Div(
-                            style={"backgroundColor": "#fff", "padding": "15px", "borderRadius": "6px", "boxShadow": "0 1px 3px rgba(0,0,0,0.05)"},
+                            style={
+                                "background": THEME["surface_raised"],
+                                "padding": "16px",
+                                "borderRadius": "10px",
+                                "border": f"1px solid {THEME['border']}",
+                            },
                             children=[
-                                html.H4("Decision Summary", style={"marginTop": "0", "borderBottom": "1px solid #f1f1f1", "paddingBottom": "8px", "color": "#34495e"}),
-                                html.P([html.Strong("Fraud Probability: "), f"{matched_record.get('fraud_probability'):.6f}"], style={"margin": "6px 0"}),
-                                html.P([html.Strong("Alert Threshold: "), f"{matched_record.get('alert_threshold'):.2f}"], style={"margin": "6px 0"}),
-                                html.P([html.Strong("Block Threshold: "), f"{matched_record.get('block_threshold'):.2f}"], style={"margin": "6px 0"}),
-                                html.P([html.Strong("System Action: "), matched_record.get("action")], style={"margin": "6px 0"}),
-                                html.P(
-                                    [
-                                        html.Strong("Ground Truth vs Pred: "),
-                                        html.Span(f"True={matched_record.get('true_fraud')}, Pred={matched_record.get('pred_fraud')}", style={"fontWeight": "bold"}),
-                                        f" ({matched_record.get('result_type')})"
-                                    ],
-                                    style={"margin": "6px 0"}
+                                html.H4("Decision", style={"margin": "0 0 12px", "color": THEME["accent"], "fontSize": "13px"}),
+                                html.Div(
+                                    style={"fontSize": "32px", "fontWeight": "700", "color": color, "marginBottom": "8px"},
+                                    children=f"{prob:.4f}",
                                 ),
-                            ]
+                                html.P(f"Alert ≥ {matched_record.get('alert_threshold'):.2f}", style={"margin": "4px 0", "fontSize": "12px", "color": THEME["text_muted"]}),
+                                html.P(f"Block ≥ {matched_record.get('block_threshold'):.2f}", style={"margin": "4px 0", "fontSize": "12px", "color": THEME["text_muted"]}),
+                                html.P(f"Action: {matched_record.get('action')}", style={"margin": "8px 0 0", "fontSize": "12px"}),
+                                html.P(
+                                    f"Truth {matched_record.get('true_fraud')} → Pred {matched_record.get('pred_fraud')} ({matched_record.get('result_type')})",
+                                    style={"margin": "6px 0 0", "fontSize": "12px", "color": THEME["text_muted"]},
+                                ),
+                            ],
                         ),
                         html.Div(
-                            style={"backgroundColor": "#fff", "padding": "15px", "borderRadius": "6px", "boxShadow": "0 1px 3px rgba(0,0,0,0.05)"},
-                            children=[
-                                html.H4("Top Feature Evidence", style={"marginTop": "0", "borderBottom": "1px solid #f1f1f1", "paddingBottom": "8px", "color": "#34495e"}),
-                                html.Ul(
-                                    [html.Li(feat, style={"padding": "4px 0", "fontSize": "13px"}) for feat in features_list],
-                                    style={"paddingLeft": "20px", "margin": "0"}
-                                )
-                            ]
-                        )
-                    ]
-                ),
-                html.Div(
-                    style={"marginTop": "20px"},
-                    children=[
-                        html.H4("Detailed Audit & Explanation", style={"color": "#34495e", "marginBottom": "8px"}),
-                        html.Pre(
-                            reason_text,
                             style={
-                                "backgroundColor": "#f8f9fa",
-                                "color": "#2c3e50",
-                                "padding": "15px",
-                                "borderRadius": "6px",
-                                "whiteSpace": "pre-wrap",
-                                "fontFamily": "Consolas, Monaco, monospace",
-                                "fontSize": "12px",
-                                "borderLeft": f"5px solid {color}",
-                                "boxShadow": "inset 0 1px 3px rgba(0,0,0,0.02)",
-                                "border": "1px solid #e9ecef",
-                                "borderLeftWidth": "5px"
-                            }
-                        )
-                    ]
-                )
+                                "background": THEME["surface_raised"],
+                                "padding": "16px",
+                                "borderRadius": "10px",
+                                "border": f"1px solid {THEME['border']}",
+                            },
+                            children=[
+                                html.H4("Feature evidence", style={"margin": "0 0 12px", "color": THEME["accent"], "fontSize": "13px"}),
+                                html.Ul(
+                                    [
+                                        html.Li(feat, style={"padding": "5px 0", "fontSize": "12px", "color": THEME["text"]})
+                                        for feat in features_list
+                                    ]
+                                    or [html.Li("No features recorded.", style={"color": THEME["text_muted"]})],
+                                    style={"paddingLeft": "18px", "margin": 0},
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                html.Pre(
+                    reason_text,
+                    style={
+                        "marginTop": "16px",
+                        "background": "#050a14",
+                        "color": "#cbd5e1",
+                        "padding": "16px",
+                        "borderRadius": "10px",
+                        "whiteSpace": "pre-wrap",
+                        "fontFamily": THEME["mono"],
+                        "fontSize": "11px",
+                        "borderLeft": f"4px solid {color}",
+                        "border": f"1px solid {THEME['border']}",
+                    },
+                ),
             ]
         )
 

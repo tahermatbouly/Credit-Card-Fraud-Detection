@@ -40,7 +40,7 @@ from dash import (
 
 from dash.dash_table import DataTable
 
-from src.simulation.simulation_runner import run_simulation
+from real_simulation import run_real_simulation
 
 
 # =========================================================
@@ -281,8 +281,8 @@ def create_app():
             ),
 
             html.P(
-                "Run virtual attacks against the fraud detection system "
-                "and analyze model behavior in real time."
+                "Run 8 virtual attack scenarios (real_simulation.py) against the "
+                "trained model with ALLOW / REVIEW / BLOCK decisions."
             ),
 
             # =================================================
@@ -320,7 +320,7 @@ def create_app():
                         children=[
 
                             html.Label(
-                                "Threshold"
+                                "Block threshold"
                             ),
 
                             dcc.Input(
@@ -330,6 +330,31 @@ def create_app():
                                 type="number",
 
                                 value=0.3,
+
+                                min=0.01,
+
+                                max=0.99,
+
+                                step=0.01,
+                            ),
+                        ]
+                    ),
+
+                    html.Div(
+
+                        children=[
+
+                            html.Label(
+                                "Alert threshold"
+                            ),
+
+                            dcc.Input(
+
+                                id="alert-threshold-input",
+
+                                type="number",
+
+                                value=0.12,
 
                                 min=0.01,
 
@@ -546,6 +571,8 @@ def create_app():
 
         State("threshold-input", "value"),
 
+        State("alert-threshold-input", "value"),
+
         State("flood-input", "value"),
 
         prevent_initial_call=True,
@@ -554,41 +581,18 @@ def create_app():
     def on_run(
         _clicks,
         threshold,
+        alert_threshold,
         flood_repeats,
     ):
 
         root = _project_root()
 
-        data_path = (
-            root
-            / "data"
-            / "processed"
-            / "processed_paysim.csv"
-        )
-
-        model, scaler, feature_names = _load_model_bundle(root)
-
-        X_sample, y_sample = _sample_base_transactions(
-            data_path
-        )
-
-        summary = run_simulation(
-
-            model,
-
-            X_sample,
-
-            y_sample,
-
-            feature_names,
-
-            threshold=float(threshold),
-
+        summary = run_real_simulation(
+            project_root=root,
+            block_threshold=float(threshold),
+            alert_threshold=float(alert_threshold),
             flood_repeats=int(flood_repeats),
-
-            scaler=scaler,
-
-            max_explanations=25,
+            save_outputs=True,
         )
 
         # =================================================
@@ -603,9 +607,13 @@ def create_app():
 
         total_tx = overall["total_transactions"]
 
+        n_scenarios = summary.get("scenario_count", 8)
+        avg_lat = overall.get("avg_latency_ms", 0.0)
         status = (
-            f"Processed {total_tx} transactions "
-            f"through the fraud detection engine."
+            f"Ran {n_scenarios} scenarios — {total_tx} transactions scored. "
+            f"Block≥{summary['threshold']}, review≥{summary['alert_threshold']}. "
+            f"Avg latency: {avg_lat:.2f} ms/tx. "
+            f"Results saved to output/simulation/."
         )
 
         # =================================================
@@ -734,6 +742,10 @@ def create_app():
         # Metrics View
         # =================================================
 
+        allow_n = sum(1 for r in flat if r["decision"] == "ALLOW")
+        review_n = sum(1 for r in flat if r["decision"] == "REVIEW")
+        block_n = sum(1 for r in flat if r["decision"] == "BLOCK")
+
         metrics = html.Ul(
 
             [
@@ -752,6 +764,14 @@ def create_app():
 
                 html.Li(
                     f"False Negatives: {counts['FN']}"
+                ),
+
+                html.Li(
+                    f"Decisions — ALLOW: {allow_n} | REVIEW: {review_n} | BLOCK: {block_n}"
+                ),
+
+                html.Li(
+                    f"Avg scoring latency: {avg_lat:.2f} ms / transaction"
                 ),
             ]
         )
@@ -777,7 +797,7 @@ DECISION: {r['decision']}
 
 TRUE LABEL: {r['true_fraud']}
 
-PREDICTION: {r['pred_fraud']}
+PRED FRAUD (binary): {r['pred_fraud']}
 
 ================================================
 """

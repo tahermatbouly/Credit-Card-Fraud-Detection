@@ -8,6 +8,6 @@
     "isFraud",
     "isFlaggedFraud"
   ],
-  "data_path": "data\\processed\\processed_paysim.csv",
+  "data_path": "data/processed/processed_paysim.csv",
   "random_state": 42
 }

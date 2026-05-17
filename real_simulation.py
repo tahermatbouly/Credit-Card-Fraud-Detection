@@ -59,6 +59,33 @@ BLOCK_THRESHOLD = 0.30
 ALERT_THRESHOLD = 0.12
 FLOOD_REPEATS = 12
 
+SCENARIO_DESCRIPTIONS: dict[str, str] = {
+    "01_normal_baseline": (
+        "Baseline traffic using the stratified sample without feature manipulation."
+    ),
+    "02_random_noise_flood": (
+        "Gaussian multiplicative noise on numeric features (one-hot type columns excluded)."
+    ),
+    "03_micro_transaction_probe": (
+        "Amount scaled to 2% of original — probes micro-payment abuse patterns."
+    ),
+    "04_high_value_flood": (
+        "Transaction amounts multiplied by 12× with derived amount_log and is_high_amount updated."
+    ),
+    "05_rapid_fire_flood": (
+        "The base batch repeated many times to simulate transaction flooding / bot traffic."
+    ),
+    "06_transfer_cashout_attack": (
+        "Forces TRANSFER (or CASH_OUT) type and marks high_risk_transaction."
+    ),
+    "07_balance_draining_attack": (
+        "Amount set near sender balance (95% drain) with balance fields reconciled."
+    ),
+    "08_mixed_obfuscation_attack": (
+        "Combined high value, risky type, balance draining, and light noise — hardest scenario."
+    ),
+}
+
 
 # -----------------------------------------------------------------------------
 # Loading
@@ -304,14 +331,17 @@ class FraudAttackSimulator:
 
         return X_attack, self.y.copy()
 
-    def build_attack_suite(self) -> Dict[str, tuple[pd.DataFrame, pd.Series]]:
+    def build_attack_suite(
+        self,
+        flood_repeats: int = FLOOD_REPEATS,
+    ) -> Dict[str, tuple[pd.DataFrame, pd.Series]]:
         """Return all 8 scenarios ordered from easiest to hardest."""
         return {
             "01_normal_baseline": self.normal_baseline(),
             "02_random_noise_flood": self.random_noise_flood(noise_level=0.12),
             "03_micro_transaction_probe": self.micro_transaction_probe(factor=0.02),
             "04_high_value_flood": self.high_value_flood(multiplier=12.0),
-            "05_rapid_fire_flood": self.rapid_fire_flood(repeats=FLOOD_REPEATS),
+            "05_rapid_fire_flood": self.rapid_fire_flood(repeats=flood_repeats),
             "06_transfer_cashout_attack": self.transfer_cashout_attack(target_type="TRANSFER"),
             "07_balance_draining_attack": self.balance_draining_attack(drain_ratio=0.95),
             "08_mixed_obfuscation_attack": self.mixed_obfuscation_attack(),
@@ -406,36 +436,68 @@ def print_scenario_report(metrics: Dict[str, Any], y_true: pd.Series, y_pred: np
 
 
 # -----------------------------------------------------------------------------
-# Main
+# Dashboard / API entry point
 # -----------------------------------------------------------------------------
 
-def main() -> None:
-    print("Loading trained model...")
-    model = load_model()
-    feature_names = load_feature_names()
+def _paths_for_root(project_root: Path) -> tuple[Path, Path, Path, Path]:
+    return (
+        project_root / DATA_PATH,
+        project_root / MODEL_PATH,
+        project_root / FEATURE_NAMES_PATH,
+        project_root / OUTPUT_DIR,
+    )
 
-    print("Loading data...")
-    X, y = load_data(DATA_PATH)
+
+def load_feature_names_from(path: Path) -> list[str]:
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing feature names file: {path}\n"
+            "Run train_choose_simulating_model.py first."
+        )
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def run_real_simulation(
+    *,
+    project_root: Path | None = None,
+    block_threshold: float = BLOCK_THRESHOLD,
+    alert_threshold: float = ALERT_THRESHOLD,
+    flood_repeats: int = FLOOD_REPEATS,
+    base_sample_size: int = BASE_SAMPLE_SIZE,
+    save_outputs: bool = False,
+) -> dict[str, Any]:
+    """
+    Run all 8 attack scenarios and return a summary dict for CLI or Dash.
+
+    Keys: threshold, alert_threshold, overall, per_attack, flat_results,
+          summary_df, detailed_df
+    """
+    if alert_threshold > block_threshold:
+        raise ValueError("alert_threshold must be <= block_threshold")
+
+    root = project_root or Path(__file__).resolve().parent
+    data_path, model_path, feature_path, output_dir = _paths_for_root(root)
+
+    if not model_path.exists():
+        raise FileNotFoundError(f"Missing model file: {model_path}")
+
+    model = joblib.load(model_path)
+    feature_names = load_feature_names_from(feature_path)
+
+    X, y = load_data(data_path)
     X = align_features(X, feature_names)
-
-    print("Creating stratified base sample...")
-    X_sample, y_sample = stratified_sample(X, y, sample_size=BASE_SAMPLE_SIZE)
-    print(f"Base sample size: {len(X_sample)}")
-    print("Base class distribution:")
-    print(y_sample.value_counts().rename({0: "legitimate", 1: "fraud"}))
+    X_sample, y_sample = stratified_sample(X, y, sample_size=base_sample_size)
 
     simulator = FraudAttackSimulator(X_sample, y_sample)
-    suite = simulator.build_attack_suite()
+    suite = simulator.build_attack_suite(flood_repeats=flood_repeats)
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    all_metrics = []
-    all_details = []
-    all_y_true = []
-    all_y_pred = []
-
-    print("\nRunning 8 simulation scenarios...")
-    print(f"BLOCK_THRESHOLD={BLOCK_THRESHOLD}, ALERT_THRESHOLD={ALERT_THRESHOLD}")
+    all_metrics: list[dict[str, Any]] = []
+    all_details: list[pd.DataFrame] = []
+    all_y_true: list[int] = []
+    all_y_pred: list[int] = []
+    per_attack: list[dict[str, Any]] = []
+    flat_results: list[dict[str, Any]] = []
 
     for scenario_name, (X_attack, y_attack) in suite.items():
         X_attack = align_features(X_attack, feature_names)
@@ -444,52 +506,154 @@ def main() -> None:
             X_attack,
             y_attack,
             scenario_name=scenario_name,
-            block_threshold=BLOCK_THRESHOLD,
-            alert_threshold=ALERT_THRESHOLD,
+            block_threshold=block_threshold,
+            alert_threshold=alert_threshold,
         )
 
-        y_pred = detailed["pred_fraud"].values
-        print_scenario_report(metrics, y_attack, y_pred)
+        cm = np.array(
+            [[metrics["TN"], metrics["FP"]], [metrics["FN"], metrics["TP"]]],
+            dtype=int,
+        )
+        description = SCENARIO_DESCRIPTIONS.get(
+            scenario_name,
+            f"Scenario: {scenario_name}",
+        )
+
+        per_attack.append(
+            {
+                "attack_name": scenario_name,
+                "attack_description": description,
+                "confusion_matrix": cm,
+                "counts": {
+                    "TN": metrics["TN"],
+                    "FP": metrics["FP"],
+                    "FN": metrics["FN"],
+                    "TP": metrics["TP"],
+                },
+                "metrics": metrics,
+            }
+        )
+
+        for _, row in detailed.iterrows():
+            prob = float(row["fraud_probability"])
+            decision = str(row["decision"])
+            flat_results.append(
+                {
+                    "attack_type": scenario_name,
+                    "probability": prob,
+                    "decision": decision,
+                    "true_fraud": int(row["true_fraud"]),
+                    "pred_fraud": int(row["pred_fraud"]),
+                    "explanation": {
+                        "attack_analysis": description,
+                        "prediction_summary": (
+                            f"P(fraud)={prob:.4f} → {decision} "
+                            f"(block≥{block_threshold}, review≥{alert_threshold})"
+                        ),
+                        "truth_analysis": None,
+                        "feature_evidence": [],
+                    },
+                }
+            )
 
         all_metrics.append(metrics)
         all_details.append(detailed)
-        all_y_true.extend(y_attack.values.tolist())
-        all_y_pred.extend(y_pred.tolist())
+        all_y_true.extend(y_attack.astype(int).tolist())
+        all_y_pred.extend(detailed["pred_fraud"].astype(int).tolist())
+
+    overall_cm = confusion_matrix(all_y_true, all_y_pred, labels=[0, 1])
+    tn, fp, fn, tp = overall_cm.ravel()
+
+    latencies = [m["avg_time_per_tx_ms"] for m in all_metrics]
+    weights = [m["transactions"] for m in all_metrics]
+    total_w = max(sum(weights), 1)
+    weighted_avg_latency = sum(l * w for l, w in zip(latencies, weights)) / total_w
 
     summary_df = pd.DataFrame(all_metrics)
     detailed_df = pd.concat(all_details, ignore_index=True)
 
-    summary_path = OUTPUT_DIR / "simulation_summary.csv"
-    detailed_path = OUTPUT_DIR / "simulation_detailed_results.csv"
+    if save_outputs:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        summary_df.to_csv(output_dir / "simulation_summary.csv", index=False)
+        detailed_df.to_csv(output_dir / "simulation_detailed_results.csv", index=False)
 
-    summary_df.to_csv(summary_path, index=False)
-    detailed_df.to_csv(detailed_path, index=False)
+    return {
+        "threshold": block_threshold,
+        "alert_threshold": alert_threshold,
+        "flood_repeats": flood_repeats,
+        "base_sample_size": len(X_sample),
+        "scenario_count": len(suite),
+        "per_attack": per_attack,
+        "flat_results": flat_results,
+        "overall": {
+            "confusion_matrix": overall_cm,
+            "counts": {"TN": int(tn), "FP": int(fp), "FN": int(fn), "TP": int(tp)},
+            "total_transactions": len(all_y_true),
+            "avg_latency_ms": float(weighted_avg_latency),
+        },
+        "summary_df": summary_df,
+        "detailed_df": detailed_df,
+    }
+
+
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
+
+def main() -> None:
+    print("Loading trained model and running 8-scenario simulation...")
+    result = run_real_simulation(
+        block_threshold=BLOCK_THRESHOLD,
+        alert_threshold=ALERT_THRESHOLD,
+        flood_repeats=FLOOD_REPEATS,
+        base_sample_size=BASE_SAMPLE_SIZE,
+        save_outputs=True,
+    )
+
+    print(f"Base sample size: {result['base_sample_size']}")
+    print("\nRunning 8 simulation scenarios...")
+    print(
+        f"BLOCK_THRESHOLD={result['threshold']}, "
+        f"ALERT_THRESHOLD={result['alert_threshold']}"
+    )
+
+    for attack in result["per_attack"]:
+        m = attack["metrics"]
+        y_true = result["detailed_df"].loc[
+            result["detailed_df"]["scenario"] == attack["attack_name"], "true_fraud"
+        ]
+        y_pred = result["detailed_df"].loc[
+            result["detailed_df"]["scenario"] == attack["attack_name"], "pred_fraud"
+        ]
+        print_scenario_report(m, y_true, y_pred.values)
 
     print("\n" + "#" * 80)
     print("TOTAL SIMULATION RESULTS")
     print("#" * 80)
 
-    total_cm = confusion_matrix(all_y_true, all_y_pred, labels=[0, 1])
-    tn, fp, fn, tp = total_cm.ravel()
-
-    print(f"Total transactions: {len(all_y_true)}")
+    overall = result["overall"]
+    cm = overall["confusion_matrix"]
+    c = overall["counts"]
+    print(f"Total transactions: {overall['total_transactions']}")
     print("Overall confusion matrix [[TN, FP], [FN, TP]]:")
-    print(total_cm)
-    print(f"TN={tn}, FP={fp}, FN={fn}, TP={tp}")
+    print(cm)
+    print(f"TN={c['TN']}, FP={c['FP']}, FN={c['FN']}, TP={c['TP']}")
     print("Overall classification report:")
     print(
         classification_report(
-            all_y_true,
-            all_y_pred,
+            result["detailed_df"]["true_fraud"],
+            result["detailed_df"]["pred_fraud"],
             labels=[0, 1],
             target_names=["legitimate", "fraud"],
             zero_division=0,
         )
     )
-
+    print(
+        f"Weighted avg scoring latency: {overall['avg_latency_ms']:.2f} ms / transaction"
+    )
     print("Saved simulation outputs:")
-    print(f"- {summary_path}")
-    print(f"- {detailed_path}")
+    print(f"- {OUTPUT_DIR / 'simulation_summary.csv'}")
+    print(f"- {OUTPUT_DIR / 'simulation_detailed_results.csv'}")
 
 
 if __name__ == "__main__":
