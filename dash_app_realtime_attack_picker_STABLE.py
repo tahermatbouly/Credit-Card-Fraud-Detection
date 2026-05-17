@@ -78,9 +78,20 @@ PLOTLY_LAYOUT = dict(
     legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color=THEME["text"])),
 )
 
+GRAPH_CONFIG = {"displayModeBar": False, "responsive": True}
+
+GRAPH_STYLE = {
+    "width": "100%",
+    "height": "clamp(260px, 36vh, 380px)",
+    "minHeight": "260px",
+    "maxHeight": "380px",
+}
+
 TABLE_STYLES = {
     "style_table": {
         "overflowX": "auto",
+        "width": "100%",
+        "maxWidth": "100%",
         "borderRadius": "10px",
         "border": f"1px solid {THEME['border']}",
     },
@@ -113,6 +124,17 @@ TABLE_STYLES = {
 }
 
 
+def _graph(id_: str, figure):
+    """Responsive Plotly graph wrapper."""
+    return dcc.Graph(
+        id=id_,
+        figure=figure,
+        config=GRAPH_CONFIG,
+        style=GRAPH_STYLE,
+        className="plot-box",
+    )
+
+
 def _card(children, *, style=None):
     base = {
         "background": THEME["surface"],
@@ -120,6 +142,9 @@ def _card(children, *, style=None):
         "borderRadius": "14px",
         "padding": "18px 20px",
         "boxShadow": "0 8px 32px rgba(0,0,0,0.35)",
+        "minWidth": 0,
+        "maxWidth": "100%",
+        "overflow": "hidden",
     }
     if style:
         base.update(style)
@@ -202,9 +227,10 @@ def _build_kpi_row(
     return html.Div(
         style={
             "display": "grid",
-            "gridTemplateColumns": "repeat(auto-fit, minmax(160px, 1fr))",
+            "gridTemplateColumns": "repeat(auto-fit, minmax(min(160px, 100%), 1fr))",
             "gap": "14px",
             "marginBottom": "22px",
+            "width": "100%",
         },
         children=[
             _kpi_card("Transactions", f"{total_tx:,}", accent=THEME["accent"], hint="Streamed in real time"),
@@ -1006,8 +1032,16 @@ def _run_realtime_stream(
 # =========================================================
 
 
-def _apply_plotly_theme(fig: go.Figure, title: str, height: int = 360) -> go.Figure:
-    fig.update_layout(**PLOTLY_LAYOUT, title=dict(text=title, x=0.02, xanchor="left"), height=height)
+def _apply_plotly_theme(fig: go.Figure, title: str, height: int | None = None) -> go.Figure:
+    layout = {
+        **PLOTLY_LAYOUT,
+        "title": dict(text=title, x=0.02, xanchor="left"),
+        "autosize": True,
+        "margin": dict(l=40, r=16, t=48, b=36),
+    }
+    if height is not None:
+        layout["height"] = height
+    fig.update_layout(**layout)
     return fig
 
 
@@ -1067,7 +1101,7 @@ def _confusion_figure(cm: np.ndarray) -> go.Figure:
             scaleratio=1,
         ),
     )
-    return _apply_plotly_theme(fig, "Detection outcomes", height=380)
+    return _apply_plotly_theme(fig, "Detection outcomes")
 
 
 def _decision_pie_figure(allow: int, review: int, block: int) -> go.Figure:
@@ -1089,7 +1123,7 @@ def _decision_pie_figure(allow: int, review: int, block: int) -> go.Figure:
         ]
     )
     fig.update_layout(showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.12))
-    return _apply_plotly_theme(fig, "Operational decisions", height=380)
+    return _apply_plotly_theme(fig, "Operational decisions")
 
 
 def _performance_figure(
@@ -1149,8 +1183,7 @@ def _performance_figure(
         ann.font.color = THEME["text_muted"]
         ann.font.size = 12
 
-    fig = _apply_plotly_theme(fig, "Performance snapshot", height=380)
-    return fig
+    return _apply_plotly_theme(fig, "Performance snapshot")
 
 
 def _latency_figure(latencies: List[float]) -> go.Figure:
@@ -1165,7 +1198,7 @@ def _latency_figure(latencies: List[float]) -> go.Figure:
             showarrow=False,
             font=dict(color=THEME["text_muted"], size=14),
         )
-        return _apply_plotly_theme(fig, "Scoring latency", height=280)
+        return _apply_plotly_theme(fig, "Scoring latency")
 
     arr = np.asarray(latencies, dtype=float)
     fig = go.Figure(
@@ -1185,7 +1218,7 @@ def _latency_figure(latencies: List[float]) -> go.Figure:
     )
     p95 = float(np.percentile(arr, 95))
     fig.add_vline(x=p95, line_dash="dash", line_color=THEME["review"], annotation_text=f"p95: {p95:.1f} ms")
-    return _apply_plotly_theme(fig, "Scoring latency distribution", height=280)
+    return _apply_plotly_theme(fig, "Scoring latency distribution")
 
 
 def _empty_figure(title: str = "Awaiting simulation run") -> go.Figure:
@@ -1199,7 +1232,7 @@ def _empty_figure(title: str = "Awaiting simulation run") -> go.Figure:
         showarrow=False,
         font=dict(color=THEME["text_muted"], size=14),
     )
-    return _apply_plotly_theme(fig, title, height=360)
+    return _apply_plotly_theme(fig, title)
 
 
 # =========================================================
@@ -1245,17 +1278,141 @@ def _control_input_style():
     }
 
 
+RESPONSIVE_INDEX_STRING = """<!DOCTYPE html>
+<html lang="en">
+    <head>
+        {%metas%}
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <style>
+            *, *::before, *::after { box-sizing: border-box; }
+            html, body {
+                margin: 0;
+                padding: 0;
+                width: 100%;
+                max-width: 100vw;
+                overflow-x: hidden;
+            }
+            #react-entry-point, #react-entry-point > div {
+                width: 100%;
+                max-width: 100%;
+            }
+            .app-shell {
+                width: 100%;
+                max-width: min(1600px, 100%);
+                margin: 0 auto;
+                padding: clamp(12px, 2.5vw, 28px);
+                padding-bottom: clamp(24px, 4vw, 48px);
+            }
+            .grid-2-col {
+                display: grid;
+                grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+                gap: clamp(12px, 2vw, 18px);
+                width: 100%;
+            }
+            .grid-2-equal {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: clamp(12px, 2vw, 18px);
+                width: 100%;
+            }
+            .controls-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap: 14px;
+                align-items: end;
+                width: 100%;
+            }
+            .controls-grid .control-span-wide {
+                grid-column: 1 / -1;
+            }
+            @media (min-width: 900px) {
+                .controls-grid .control-span-wide {
+                    grid-column: span 2;
+                }
+                .controls-grid {
+                    grid-template-columns: 2fr repeat(3, minmax(120px, 1fr)) auto;
+                }
+            }
+            .charts-stack {
+                display: flex;
+                flex-direction: column;
+                gap: clamp(12px, 2vw, 18px);
+                min-width: 0;
+                width: 100%;
+            }
+            .table-scroll {
+                width: 100%;
+                max-width: 100%;
+                overflow: auto;
+                max-height: min(520px, 55vh);
+                -webkit-overflow-scrolling: touch;
+            }
+            .plot-box {
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+            }
+            .plot-box .js-plotly-plot,
+            .plot-box .plot-container.plotly {
+                width: 100% !important;
+                max-width: 100% !important;
+            }
+            .run-btn-wrap {
+                display: flex;
+                align-items: flex-end;
+            }
+            .run-btn-wrap button {
+                width: 100%;
+                white-space: nowrap;
+            }
+            @media (max-width: 1100px) {
+                .grid-2-col, .grid-2-equal { grid-template-columns: 1fr; }
+            }
+            @media (max-width: 600px) {
+                .controls-grid { grid-template-columns: 1fr; }
+                .controls-grid .control-span-wide { grid-column: 1; }
+            }
+            .audit-grid-2 {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 16px;
+                width: 100%;
+            }
+            @media (max-width: 768px) {
+                .audit-grid-2 { grid-template-columns: 1fr; }
+            }
+        </style>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+"""
+
+
 def create_app():
     app = Dash(__name__)
     app.title = "FraudShield · Real-Time Simulation"
+    app.index_string = RESPONSIVE_INDEX_STRING
 
     app.layout = html.Div(
+        className="app-shell",
         style={
             "fontFamily": THEME["font"],
             "minHeight": "100vh",
             "background": THEME["bg_gradient"],
             "color": THEME["text"],
-            "padding": "24px 28px 48px",
+            "width": "100%",
+            "maxWidth": "100%",
+            "boxSizing": "border-box",
         },
         children=[
             dcc.Store(id="audit-store", data=[]),
@@ -1314,14 +1471,10 @@ def create_app():
             _card(
                 [
                     html.Div(
-                        style={
-                            "display": "grid",
-                            "gridTemplateColumns": "2fr repeat(3, 1fr) auto",
-                            "gap": "16px",
-                            "alignItems": "end",
-                        },
+                        className="controls-grid",
                         children=[
                             html.Div(
+                                className="control-span-wide",
                                 children=[
                                     _control_label("Attack scenario"),
                                     dcc.Dropdown(
@@ -1329,9 +1482,9 @@ def create_app():
                                         options=ATTACK_OPTIONS,
                                         value="01_normal_baseline",
                                         clearable=False,
-                                        style={"color": "#0f172a"},
+                                        style={"color": "#0f172a", "width": "100%"},
                                     ),
-                                ]
+                                ],
                             ),
                             html.Div(
                                 children=[
@@ -1375,22 +1528,27 @@ def create_app():
                                     ),
                                 ]
                             ),
-                            html.Button(
-                                "Run simulation",
-                                id="run-btn",
-                                n_clicks=0,
-                                style={
-                                    "padding": "12px 28px",
-                                    "cursor": "pointer",
-                                    "fontSize": "14px",
-                                    "fontWeight": "600",
-                                    "height": "42px",
-                                    "border": "none",
-                                    "borderRadius": "10px",
-                                    "background": f"linear-gradient(135deg, {THEME['accent']} 0%, #0284c7 100%)",
-                                    "color": "#0b1220",
-                                    "boxShadow": "0 4px 20px rgba(56,189,248,0.35)",
-                                },
+                            html.Div(
+                                className="run-btn-wrap",
+                                children=[
+                                    html.Button(
+                                        "Run simulation",
+                                        id="run-btn",
+                                        n_clicks=0,
+                                        style={
+                                            "padding": "12px 20px",
+                                            "cursor": "pointer",
+                                            "fontSize": "14px",
+                                            "fontWeight": "600",
+                                            "minHeight": "42px",
+                                            "border": "none",
+                                            "borderRadius": "10px",
+                                            "background": f"linear-gradient(135deg, {THEME['accent']} 0%, #0284c7 100%)",
+                                            "color": "#0b1220",
+                                            "boxShadow": "0 4px 20px rgba(56,189,248,0.35)",
+                                        },
+                                    ),
+                                ],
                             ),
                         ],
                     ),
@@ -1404,12 +1562,8 @@ def create_app():
                 color=THEME["accent"],
                 children=[
                     html.Div(
-                        style={
-                            "display": "grid",
-                            "gridTemplateColumns": "1.2fr 0.8fr",
-                            "gap": "18px",
-                            "marginBottom": "18px",
-                        },
+                        className="grid-2-col",
+                        style={"marginBottom": "18px"},
                         children=[
                             _card(
                                 [
@@ -1419,6 +1573,7 @@ def create_app():
                                     ),
                                     html.Div(
                                         id="predictions-table-wrap",
+                                        className="table-scroll",
                                         children=[
                                             DataTable(
                                                 id="predictions-table",
@@ -1436,23 +1591,19 @@ def create_app():
                                 ]
                             ),
                             html.Div(
-                                style={"display": "flex", "flexDirection": "column", "gap": "18px"},
+                                className="charts-stack",
                                 children=[
-                                    _card([dcc.Graph(id="cm-graph", figure=_empty_figure("Detection outcomes"), config={"displayModeBar": False})]),
-                                    _card([dcc.Graph(id="decision-chart", figure=_empty_figure("Operational decisions"), config={"displayModeBar": False})]),
+                                    _card([_graph("cm-graph", _empty_figure("Detection outcomes"))]),
+                                    _card([_graph("decision-chart", _empty_figure("Operational decisions"))]),
                                 ],
                             ),
                         ],
                     ),
                     html.Div(
-                        style={
-                            "display": "grid",
-                            "gridTemplateColumns": "1fr 1fr",
-                            "gap": "18px",
-                            "marginBottom": "18px",
-                        },
+                        className="grid-2-equal",
+                        style={"marginBottom": "18px"},
                         children=[
-                            _card([dcc.Graph(id="performance-chart", figure=_empty_figure("Performance snapshot"), config={"displayModeBar": False})]),
+                            _card([_graph("performance-chart", _empty_figure("Performance snapshot"))]),
                             _card(
                                 [
                                     _section_title("Live event log", "Most recent scored transactions."),
@@ -1463,8 +1614,10 @@ def create_app():
                                             "background": "#050a14",
                                             "color": "#7dd3fc",
                                             "padding": "16px",
-                                            "height": "320px",
+                                            "height": "clamp(200px, 32vh, 320px)",
+                                            "maxHeight": "min(320px, 40vh)",
                                             "overflowY": "auto",
+                                            "overflowX": "auto",
                                             "fontSize": "11px",
                                             "fontFamily": THEME["mono"],
                                             "borderRadius": "8px",
@@ -1478,10 +1631,7 @@ def create_app():
                         ],
                     ),
                     _card(
-                        [
-                            _section_title("Scoring latency"),
-                            dcc.Graph(id="latency-chart", figure=_empty_figure("Latency"), config={"displayModeBar": False}),
-                        ],
+                        [_section_title("Scoring latency"), _graph("latency-chart", _empty_figure("Latency"))],
                         style={"marginBottom": "18px"},
                     ),
                     _card(
@@ -1804,7 +1954,7 @@ def create_app():
                     ],
                 ),
                 html.Div(
-                    style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "16px"},
+                    className="audit-grid-2",
                     children=[
                         html.Div(
                             style={
@@ -1812,6 +1962,7 @@ def create_app():
                                 "padding": "16px",
                                 "borderRadius": "10px",
                                 "border": f"1px solid {THEME['border']}",
+                                "minWidth": 0,
                             },
                             children=[
                                 html.H4("Decision", style={"margin": "0 0 12px", "color": THEME["accent"], "fontSize": "13px"}),
