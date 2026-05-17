@@ -1,13 +1,6 @@
 {
-  "best_model_name": "random_forest",
-  "selection_metric": "roc_auc",
-  "roc_auc": 0.9998957584096902,
-  "threshold_used_for_report": 0.3,
-  "target_column": "isFraud",
-  "dropped_columns": [
-    "isFraud",
-    "isFlaggedFraud"
-  ],
-  "data_path": "data/processed/processed_paysim.csv",
-  "random_state": 42
+  "model_name": "Random Forest",
+  "model_name_slug": "random_forest",
+  "roc_auc": 0.9998749100916284,
+  "has_scaler": false
 }
